@@ -22,7 +22,8 @@ const createReview = async (req, res) => {
       return res.status(404).json({ message: "Session not found" });
     }
 
-    if (session.status !== "ENDED") {
+    if (session.status !== "ENDED" && session.status !== "FORCE_ENDED") {
+      console.log(`❌ REVIEW REJECTED: Session ${session._id} status is ${session.status}`);
       return res.status(400).json({
         message: "You can only review after session ends",
       });
@@ -77,4 +78,24 @@ const createReview = async (req, res) => {
   }
 };
 
-module.exports = { createReview };
+
+const getLawyerReviews = async (req, res) => {
+  try {
+    const { lawyerId } = req.params;
+
+    const reviews = await Review.find({ lawyerId })
+      .populate("userId", "name profileImage")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ reviews });
+  } catch (error) {
+    console.error("GET REVIEWS ERROR", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+
+module.exports = { createReview, getLawyerReviews };
+

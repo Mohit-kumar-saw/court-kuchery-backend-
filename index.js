@@ -35,7 +35,7 @@ app.use("/auth", authRoutes);
 app.use("/wallet", walletRoutes);
 app.use("/lawyer", lawyerRoutes);
 app.use("/consult", consultRoutes);
-app.use("/review", reviewRoutes);
+app.use("/reviews", reviewRoutes);
 app.use("/api/lawyer/earnings", lawyerEarningRoutes);
 app.use("/chat", chatRoutes);
 
