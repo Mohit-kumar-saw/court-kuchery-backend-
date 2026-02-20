@@ -29,8 +29,8 @@ const consultSessionSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["ACTIVE", "ENDED", "FORCE_ENDED"],
-      default: "ACTIVE",
+      enum: ["REQUESTED", "ACTIVE", "ENDED", "FORCE_ENDED", "DECLINED"],
+      default: "REQUESTED",
     },
 
     startedAt: {

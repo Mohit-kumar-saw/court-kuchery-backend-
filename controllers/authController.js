@@ -1,13 +1,13 @@
 
 const bcrypt = require("bcryptjs");
 const User = require("../modals/authModal");
-const { generateAccessToken, generateRefreshToken,  verifyRefreshToken} = require("../utils/jwt");
+const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require("../utils/jwt");
 
 
 
 const register = async (req, res) => {
   try {
-    const { name, email, password , phone} = req.body;
+    const { name, email, password, phone } = req.body;
 
     if (!name || !email || !password || !phone) {
       return res.status(400).json({ message: "All fields are required" });
@@ -31,12 +31,12 @@ const register = async (req, res) => {
       id: user._id,
       role: user.role,
     });
-    
+
     const refreshToken = generateRefreshToken({
       id: user._id,
       role: user.role,
     });
-    
+
 
     user.refreshToken = refreshToken;
     await user.save();
@@ -85,12 +85,12 @@ const login = async (req, res) => {
       id: user._id,
       role: user.role,
     });
-    
+
     const refreshToken = generateRefreshToken({
       id: user._id,
       role: user.role,
     });
-    
+
 
     user.refreshToken = refreshToken;
     user.lastLoginAt = new Date();
@@ -162,4 +162,16 @@ const refreshAccessToken = async (req, res) => {
 };
 
 
-module.exports = { register, login ,logout, refreshAccessToken};
+const getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.status(200).json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+module.exports = { register, login, logout, refreshAccessToken, getProfile };

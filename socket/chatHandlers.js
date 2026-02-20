@@ -6,20 +6,11 @@ module.exports = (io, socket) => {
   /* ============================
      JOIN SESSION
   ============================ */
-  socket.on("JOIN_SESSION", async ({ sessionId }) => {
-    try {
-      if (!sessionId) return;
-
-      const session = await ConsultSession.findById(sessionId);
-      if (!session) return;
-
-      const room = `session:${sessionId}`;
-      socket.join(room);
-      console.log(`📌 Joined session room: ${room}`);
-
-    } catch (err) {
-      console.error("Join session error:", err);
-    }
+  socket.on("JOIN_SESSION", ({ sessionId }) => {
+    if (!sessionId) return;
+    const room = `session:${sessionId}`;
+    socket.join(room);
+    console.log(`📌 Socket ${socket.id} (${socket.user.role}) joined room: ${room}`);
   });
 
 
@@ -31,30 +22,32 @@ module.exports = (io, socket) => {
       const { sessionId, content } = data;
       if (!sessionId || !content) return;
 
-      const session = await ConsultSession.findById(sessionId);
-      if (!session || session.status !== "ACTIVE") return;
+      const role = (socket.user.role || "user").toUpperCase(); // Ensure "USER" or "LAWYER"
+
+      console.log(`📩 Message from ${socket.user.id} [${role}]: ${content}`);
 
       const newMessage = await Message.create({
         sessionId,
         senderId: socket.user.id,
-        senderRole: "USER",
+        senderRole: role,
         messageType: "TEXT",
         content,
         status: "SENT",
       });
 
       const room = `session:${sessionId}`;
+      console.log(`✅ Message saved. Emitting to ${room}`);
 
       io.to(room).emit("RECEIVE_MESSAGE", {
         _id: newMessage._id,
         sessionId,
         content,
-        senderRole: newMessage.senderRole,
+        senderRole: role,
         createdAt: newMessage.createdAt,
       });
 
     } catch (err) {
-      console.error("Message error:", err);
+      console.error("❌ SEND_MESSAGE Error:", err);
     }
   });
 

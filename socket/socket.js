@@ -37,7 +37,7 @@ const initializeSocket = (server, app) => {
   app.set("io", io);
 
   io.on("connection", (socket) => {
-    console.log("🟢 Socket connected:", socket.user.id);
+    console.log(`🟢 Socket connected: ${socket.user.id} [${socket.user.role}]`);
 
     // optional: join personal room
     socket.join(`user:${socket.user.id}`);
