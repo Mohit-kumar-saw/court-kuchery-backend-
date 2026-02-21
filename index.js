@@ -28,6 +28,10 @@ app.use(
   })
 );
 
+app.get("/health", (req, res) => {
+  res.send("server is running....")
+})
+
 app.use(express.json());
 
 // Routes
