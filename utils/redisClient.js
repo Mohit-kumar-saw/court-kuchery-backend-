@@ -1,16 +1,29 @@
 const { createClient } = require("redis");
 
+const redisUrl =
+  process.env.REDIS_URL || "redis://127.0.0.1:6379";
+
 const redisClient = createClient({
-  url: process.env.REDIS_URL,
+  url: redisUrl,
+  socket: process.env.REDIS_URL
+    ? { tls: true } // Enable TLS only in production (Upstash)
+    : undefined,
 });
 
-redisClient.on("error", (err) =>
-  console.error("Redis Client Error", err)
-);
+redisClient.on("connect", () => {
+  console.log("✅ Redis Connected");
+});
+
+redisClient.on("error", (err) => {
+  console.error("❌ Redis Client Error:", err);
+});
 
 (async () => {
-  await redisClient.connect();
-  console.log("✅ Redis Connected");
+  try {
+    await redisClient.connect();
+  } catch (err) {
+    console.error("❌ Redis Connection Failed:", err);
+  }
 })();
 
 module.exports = redisClient;
