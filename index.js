@@ -13,6 +13,7 @@ const consultRoutes = require("./routes/consultRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
 const lawyerEarningRoutes = require("./routes/lawyerEarningRoutes");
 const chatRoutes = require("./routes/chatRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 
 
 connectDB();
@@ -23,7 +24,7 @@ const server = http.createServer(app);
 app.use(
   cors({
     origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
@@ -42,6 +43,7 @@ app.use("/consult", consultRoutes);
 app.use("/reviews", reviewRoutes);
 app.use("/api/lawyer/earnings", lawyerEarningRoutes);
 app.use("/chat", chatRoutes);
+app.use("/admin", adminRoutes);
 
 // 🔥 Initialize Socket Layer
 initializeSocket(server, app);

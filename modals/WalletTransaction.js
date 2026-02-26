@@ -23,7 +23,7 @@ const walletTransactionSchema = new mongoose.Schema(
 
     reason: {
       type: String,
-      enum: ["RECHARGE", "CONSULTATION", "REFUND"],
+      enum: ["RECHARGE", "CONSULTATION", "REFUND", "LAWYER_WITHDRAWAL"],
       required: true,
     },
 

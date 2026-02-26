@@ -33,7 +33,7 @@ const lawyerEarningSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["PENDING", "PAID"],
+      enum: ["PENDING", "RELEASED", "REJECTED"],
       default: "PENDING",
     },
   },

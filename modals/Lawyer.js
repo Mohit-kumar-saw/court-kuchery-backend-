@@ -29,18 +29,28 @@ const lawyerSchema = new mongoose.Schema(
     specialization: {
       type: [String],
       enum: ["criminal", "family", "corporate", "civil", "property"],
-      required: true,
+      required: false,
     },
 
     ratePerMinute: {
       type: Number,
-      required: true,
+      required: false,
       min: 1,
     },
 
     experienceYears: {
       type: Number,
       default: 0,
+    },
+
+    barCouncilId: {
+      type: String,
+      trim: true,
+    },
+
+    profileCompleted: {
+      type: Boolean,
+      default: false,
     },
 
     bio: {
@@ -56,11 +66,16 @@ const lawyerSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    
+
+    isBlocked: {
+      type: Boolean,
+      default: false,
+    },
+
     refreshToken: {
-        type: String,
-        default: null,
-      },
+      type: String,
+      default: null,
+    },
 
     rating: {
       type: Number,
@@ -70,6 +85,24 @@ const lawyerSchema = new mongoose.Schema(
     totalReviews: {
       type: Number,
       default: 0,
+    },
+    totalEarnings: {
+      type: Number,
+      default: 0,
+    },
+    availableBalance: {
+      type: Number,
+      default: 0,
+    },
+    pendingBalance: {
+      type: Number,
+      default: 0,
+    },
+    bankDetails: {
+      accountHolder: String,
+      accountNumber: String,
+      ifscCode: String,
+      bankName: String,
     },
   },
   {

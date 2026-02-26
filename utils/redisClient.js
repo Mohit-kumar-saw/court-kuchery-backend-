@@ -1,12 +1,14 @@
 const { createClient } = require("redis");
 
-const redisUrl =
-  process.env.REDIS_URL || "redis://127.0.0.1:6379";
+const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
 const redisClient = createClient({
   url: redisUrl,
   socket: process.env.REDIS_URL
-    ? { tls: true } // Enable TLS only in production (Upstash)
+    ? {
+      tls: true,
+      rejectUnauthorized: false, // important for Upstash
+    }
     : undefined,
 });
 

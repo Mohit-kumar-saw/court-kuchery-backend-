@@ -3,13 +3,30 @@ const User = require("../modals/authModal");
 const ConsultSession = require("../modals/consultSession");
 const WalletTransaction = require("../modals/WalletTransaction");
 const LawyerEarning = require("../modals/LawyerEarning");
+const SystemSettings = require("../modals/SystemSettings");
+const mongoose = require("mongoose");
 
 const { sessions } = require("../utils/sessionBilling");
 const { acquireLock, releaseLock } = require("../utils/lock");
 
 const MIN_BALANCE = 15;
 const BILLING_INTERVAL = 10000; // 10 seconds
-const COMMISSION_PERCENT = 20;
+
+// Default fallback commission
+let COMMISSION_PERCENT = 20;
+
+// Helper to get latest settings
+const getLatestCommission = async () => {
+  try {
+    const settings = await SystemSettings.findOne();
+    if (settings) {
+      COMMISSION_PERCENT = settings.commissionPercentage;
+    }
+  } catch (err) {
+    console.error("Error fetching settings:", err);
+  }
+  return COMMISSION_PERCENT;
+};
 
 /* =====================================================
    START CONSULTATION
@@ -198,77 +215,80 @@ const startBillingInterval = (io, session) => {
 
   const interval = setInterval(async () => {
     try {
-      const freshUser = await User.findById(userId);
+      // 1. Fetch fresh state
       const freshSession = await ConsultSession.findById(session._id);
-
-      if (!freshUser || !freshSession || freshSession.status !== "ACTIVE") {
+      if (!freshSession || freshSession.status !== "ACTIVE") {
         clearInterval(interval);
         sessions.delete(sessionIdStr);
         return;
       }
 
-      const perSecondRate = freshSession.ratePerMinute / 60;
-      const deduction = perSecondRate * 10;
+      const perMinuteRate = freshSession.ratePerMinute;
+      const deduction = (perMinuteRate / 60) * (BILLING_INTERVAL / 1000);
 
-      /* 🔴 AUTO FORCE END */
-      if (freshUser.walletBalance <= deduction) {
-        const remaining = freshUser.walletBalance;
+      // 2. Atomic Wallet Deduction
+      // We only debit if balance is sufficient to prevent negative balance
+      const updatedUser = await User.findOneAndUpdate(
+        { _id: userId, walletBalance: { $gte: deduction } },
+        { $inc: { walletBalance: -deduction } },
+        { new: true }
+      );
 
-        await WalletTransaction.create({
-          userId,
-          type: "DEBIT",
-          amount: remaining,
-          reason: "CONSULTATION",
-          referenceId: freshSession._id.toString(),
-          balanceAfter: 0,
-        });
+      if (!updatedUser) {
+        // INSUFFICIENT BALANCE -> Force End
+        console.log(`Insufficient balance for user ${userId}, force ending session ${sessionIdStr}`);
 
-        freshUser.walletBalance = 0;
-        freshSession.totalAmount += remaining;
+        // Final drain of whatever is left
+        const userToDrain = await User.findById(userId);
+        const remaining = userToDrain.walletBalance;
+
+        // Atomic final drain
+        const finalUser = await User.findOneAndUpdate(
+          { _id: userId, walletBalance: remaining },
+          { $set: { walletBalance: 0 } },
+          { new: true }
+        );
+
+        if (finalUser) {
+          await WalletTransaction.create({
+            userId,
+            type: "DEBIT",
+            amount: remaining,
+            reason: "CONSULTATION",
+            referenceId: sessionIdStr,
+            balanceAfter: 0,
+          });
+          freshSession.totalAmount += remaining;
+        }
+
         freshSession.status = "FORCE_ENDED";
         freshSession.endedAt = new Date();
-
-        await freshUser.save();
         await freshSession.save();
 
-        const commissionAmount = (freshSession.totalAmount * COMMISSION_PERCENT) / 100;
-        const lawyerAmount = freshSession.totalAmount - commissionAmount;
-
-        await LawyerEarning.create({
-          sessionId: freshSession._id,
-          lawyerId: freshSession.lawyerId,
-          totalAmount: freshSession.totalAmount,
-          commissionAmount,
-          lawyerAmount,
-        });
-
-        io.to(room).emit("SESSION_FORCE_ENDED", {
-          totalAmount: freshSession.totalAmount,
-          remainingBalance: 0,
-          commission: commissionAmount,
-          lawyerEarning: lawyerAmount,
-          reason: "INSUFFICIENT_BALANCE",
-        });
-
-        /* 🔓 RELEASE LOCKS */
-        await releaseLock(`lock:lawyer:${freshSession.lawyerId}`);
-        await releaseLock(`lock:user:${userId}`);
+        // Finalize Earnings (This will be moved to a transaction-safe helper in Part 1)
+        await finalizeEarning(freshSession, io, room, "INSUFFICIENT_BALANCE");
 
         clearInterval(interval);
         sessions.delete(sessionIdStr);
         return;
       }
 
-      /* 🟢 NORMAL BILLING */
-      freshUser.walletBalance -= deduction;
-      freshSession.totalAmount += deduction;
+      // 3. Record Transaction & Update Session Total
+      await WalletTransaction.create({
+        userId,
+        type: "DEBIT",
+        amount: deduction,
+        reason: "CONSULTATION",
+        referenceId: sessionIdStr,
+        balanceAfter: updatedUser.walletBalance,
+      });
 
-      await freshUser.save();
+      freshSession.totalAmount += deduction;
       await freshSession.save();
 
       io.to(room).emit("SESSION_UPDATE", {
         totalAmount: freshSession.totalAmount,
-        remainingBalance: freshUser.walletBalance,
+        remainingBalance: updatedUser.walletBalance,
       });
 
     } catch (err) {
@@ -315,32 +335,14 @@ const endConsultation = async (req, res) => {
     session.endedAt = new Date();
     await session.save();
 
-    const commissionAmount =
-      (session.totalAmount * COMMISSION_PERCENT) / 100;
+    // Finalize Earnings with Transaction
+    const { commissionAmount, lawyerAmount } = await finalizeEarning(session, io, room);
 
-    const lawyerAmount =
-      session.totalAmount - commissionAmount;
-
-    await LawyerEarning.create({
-      sessionId: session._id,
-      lawyerId: session.lawyerId,
-      totalAmount: session.totalAmount,
-      commissionAmount,
-      lawyerAmount,
-    });
-
-    /* 🔓 RELEASE LOCKS (THIS WAS MISSING BEFORE) */
+    /* 🔓 RELEASE LOCKS */
     await releaseLock(lawyerLockKey);
     await releaseLock(userLockKey);
 
     const user = await User.findById(userId);
-
-    io.to(room).emit("SESSION_ENDED", {
-      totalAmount: session.totalAmount,
-      remainingBalance: user.walletBalance,
-      commission: commissionAmount,
-      lawyerEarning: lawyerAmount,
-    });
 
     res.status(200).json({
       message: "Consultation ended successfully",
@@ -356,6 +358,85 @@ const endConsultation = async (req, res) => {
   }
 };
 
+const finalizeEarning = async (session, io, room, forceReason = null) => {
+  const mongoSession = await mongoose.startSession();
+  mongoSession.startTransaction();
+
+  try {
+    const currentCommission = await getLatestCommission();
+    const commissionAmount = (session.totalAmount * currentCommission) / 100;
+    const lawyerAmount = session.totalAmount - commissionAmount;
+
+    // 1. Double check session status in DB within transaction
+    const freshSession = await ConsultSession.findById(session._id).session(mongoSession);
+
+    // 2. Atomically create Earning record (Unique index on sessionId protects us from duplicates)
+    // If it already exists, LawyerEarning.create will throw an error and we abort transaction
+    try {
+      await LawyerEarning.create([{
+        sessionId: session._id,
+        lawyerId: session.lawyerId,
+        totalAmount: session.totalAmount,
+        commissionAmount,
+        lawyerAmount,
+      }], { session: mongoSession });
+    } catch (err) {
+      if (err.code === 11000) {
+        console.log("Earning already exists for session:", session._id);
+        await mongoSession.abortTransaction();
+        return { commissionAmount: 0, lawyerAmount: 0 }; // Already processed
+      }
+      throw err;
+    }
+
+    // 3. Atomically update Lawyer Balances
+    const updatedLawyer = await Lawyer.findByIdAndUpdate(
+      session.lawyerId,
+      {
+        $inc: {
+          pendingBalance: lawyerAmount
+        }
+      },
+      { session: mongoSession, new: true }
+    );
+
+    if (!updatedLawyer) {
+      throw new Error("Lawyer not found during balance update");
+    }
+
+    await mongoSession.commitTransaction();
+
+    // Notify via Socket
+    if (forceReason) {
+      io.to(room).emit("SESSION_FORCE_ENDED", {
+        totalAmount: session.totalAmount,
+        remainingBalance: 0,
+        commission: commissionAmount,
+        lawyerEarning: lawyerAmount,
+        reason: forceReason,
+      });
+
+      /* 🔓 RELEASE LOCKS for force end */
+      await releaseLock(`lock:lawyer:${session.lawyerId}`);
+      await releaseLock(`lock:user:${session.userId}`);
+    } else {
+      io.to(room).emit("SESSION_ENDED", {
+        totalAmount: session.totalAmount,
+        commission: commissionAmount,
+        lawyerEarning: lawyerAmount,
+      });
+    }
+
+    return { commissionAmount, lawyerAmount };
+  } catch (error) {
+    await mongoSession.abortTransaction();
+    console.error("FINALIZE EARNING ERROR 👉", error);
+    throw error;
+  } finally {
+    mongoSession.endSession();
+  }
+};
+
 const recoverActiveSessions = async (io) => {
   try {
     console.log("🔄 Recovering active sessions...");
@@ -363,90 +444,8 @@ const recoverActiveSessions = async (io) => {
 
     for (const session of activeSessions) {
       if (sessions.has(session._id.toString())) continue;
-
       console.log(`Resuming billing for session: ${session._id}`);
-
-      const interval = setInterval(async () => {
-        try {
-          const freshUser = await User.findById(session.userId);
-          const freshSession = await ConsultSession.findById(session._id);
-
-          if (!freshUser || !freshSession || freshSession.status !== "ACTIVE") {
-            clearInterval(interval);
-            sessions.delete(session._id.toString());
-            return;
-          }
-
-          const perSecondRate = freshSession.ratePerMinute / 60;
-          const deduction = perSecondRate * 10;
-
-          if (freshUser.walletBalance <= deduction) {
-            const remaining = freshUser.walletBalance;
-
-            await WalletTransaction.create({
-              userId: session.userId,
-              type: "DEBIT",
-              amount: remaining,
-              reason: "CONSULTATION",
-              referenceId: freshSession._id.toString(),
-              balanceAfter: 0,
-            });
-
-            freshUser.walletBalance = 0;
-            freshSession.totalAmount += remaining;
-            freshSession.status = "FORCE_ENDED";
-            freshSession.endedAt = new Date();
-
-            await freshUser.save();
-            await freshSession.save();
-
-            const commissionAmount =
-              (freshSession.totalAmount * COMMISSION_PERCENT) / 100;
-            const lawyerAmount = freshSession.totalAmount - commissionAmount;
-
-            await LawyerEarning.create({
-              sessionId: freshSession._id,
-              lawyerId: freshSession.lawyerId,
-              totalAmount: freshSession.totalAmount,
-              commissionAmount,
-              lawyerAmount,
-            });
-
-            io.to(`session:${session._id}`).emit("SESSION_FORCE_ENDED", {
-              totalAmount: freshSession.totalAmount,
-              remainingBalance: 0,
-              commission: commissionAmount,
-              lawyerEarning: lawyerAmount,
-              reason: "INSUFFICIENT_BALANCE",
-            });
-
-            const lawyerLockKey = `lock:lawyer:${session.lawyerId}`;
-            const userLockKey = `lock:user:${session.userId}`;
-            await releaseLock(lawyerLockKey);
-            await releaseLock(userLockKey);
-
-            clearInterval(interval);
-            sessions.delete(freshSession._id.toString());
-            return;
-          }
-
-          freshUser.walletBalance -= deduction;
-          freshSession.totalAmount += deduction;
-
-          await freshUser.save();
-          await freshSession.save();
-
-          io.to(`session:${session._id}`).emit("SESSION_UPDATE", {
-            totalAmount: freshSession.totalAmount,
-            remainingBalance: freshUser.walletBalance,
-          });
-
-        } catch (err) {
-          console.error(`Billing error for session ${session._id}:`, err);
-        }
-      }, BILLING_INTERVAL);
-
-      sessions.set(session._id.toString(), interval);
+      startBillingInterval(io, session);
     }
   } catch (error) {
     console.error("Session recovery failed:", error);
@@ -533,6 +532,20 @@ const cancelConsultation = async (req, res) => {
   }
 };
 
+const getUserConsultations = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const consultations = await ConsultSession.find({ userId })
+      .populate("lawyerId", "name specialization profileImage")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, consultations });
+  } catch (error) {
+    console.error("GET USER CONSULTATIONS ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   startConsultation,
   acceptConsultation,
@@ -541,5 +554,6 @@ module.exports = {
   endConsultation,
   getConsultationSession,
   getLawyerConsultations,
+  getUserConsultations,
   recoverActiveSessions,
 };
