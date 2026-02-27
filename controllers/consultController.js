@@ -5,6 +5,7 @@ const WalletTransaction = require("../modals/WalletTransaction");
 const LawyerEarning = require("../modals/LawyerEarning");
 const SystemSettings = require("../modals/SystemSettings");
 const mongoose = require("mongoose");
+const { RtcTokenBuilder, RtcRole } = require("agora-token");
 
 const { sessions } = require("../utils/sessionBilling");
 const { acquireLock, releaseLock } = require("../utils/lock");
@@ -546,6 +547,57 @@ const getUserConsultations = async (req, res) => {
   }
 };
 
+const generateAgoraTokenForSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const userId = req.user.id;
+
+    const session = await ConsultSession.findById(sessionId);
+    if (!session || session.status !== "ACTIVE") {
+      return res.status(404).json({ message: "Active session not found" });
+    }
+
+    // Check if user is part of the session
+    if (session.userId.toString() !== userId && session.lawyerId.toString() !== userId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const appId = process.env.AGORA_APP_ID;
+    const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+    const channelName = sessionId;
+    const uid = 0; // 0 means let Agora assign a UID
+    const role = RtcRole.PUBLISHER;
+
+    const expirationTimeInSeconds = 3600;
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+
+    if (!appId || !appCertificate || appId === "YOUR_APP_ID") {
+      return res.status(500).json({ message: "Agora credentials not configured on server" });
+    }
+
+    const token = RtcTokenBuilder.buildTokenWithUid(
+      appId,
+      appCertificate,
+      channelName,
+      uid,
+      role,
+      privilegeExpiredTs,
+      privilegeExpiredTs
+    );
+
+    res.status(200).json({
+      token,
+      uid,
+      channelName,
+      appId
+    });
+  } catch (error) {
+    console.error("AGORA TOKEN GENERATION ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   startConsultation,
   acceptConsultation,
@@ -556,4 +608,5 @@ module.exports = {
   getLawyerConsultations,
   getUserConsultations,
   recoverActiveSessions,
+  generateAgoraTokenForSession,
 };

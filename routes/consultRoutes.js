@@ -9,7 +9,8 @@ const {
     endConsultation,
     getConsultationSession,
     getLawyerConsultations,
-    getUserConsultations
+    getUserConsultations,
+    generateAgoraTokenForSession
 } = require("../controllers/consultController");
 
 router.post("/start", authMiddleware, startConsultation);
@@ -19,6 +20,7 @@ router.post("/cancel/:sessionId", authMiddleware, cancelConsultation);
 router.post("/:sessionId/end", authMiddleware, endConsultation);
 router.get("/lawyer/all", authMiddleware, getLawyerConsultations);
 router.get("/user/all", authMiddleware, getUserConsultations);
+router.get("/:sessionId/agora-token", authMiddleware, generateAgoraTokenForSession);
 router.get("/:sessionId", authMiddleware, getConsultationSession);
 
 
