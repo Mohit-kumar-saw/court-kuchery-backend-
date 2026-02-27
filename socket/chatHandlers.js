@@ -64,4 +64,20 @@ module.exports = (io, socket) => {
     console.log(`🚪 Left session room: ${room}`);
   });
 
+  /* ============================
+     WEBRTC SIGNALING
+  ============================ */
+  socket.on("WEBRTC_SIGNAL", (data) => {
+    const { sessionId, signal } = data;
+    if (!sessionId || !signal) return;
+
+    const room = `session:${sessionId}`;
+    // Broadcast to other participant in the room
+    socket.to(room).emit("WEBRTC_SIGNAL", {
+      signal,
+      senderId: socket.user.id,
+      senderRole: socket.user.role
+    });
+  });
+
 };
