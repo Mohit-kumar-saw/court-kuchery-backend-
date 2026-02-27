@@ -454,6 +454,48 @@ const completeLawyerProfile = async (req, res) => {
   }
 };
 
+const updateLawyerProfile = async (req, res) => {
+  try {
+    const lawyerId = req.user.id;
+    const { name, bio, specialization, ratePerMinute, experienceYears, phone } = req.body;
+
+    const lawyer = await Lawyer.findByIdAndUpdate(
+      lawyerId,
+      {
+        name,
+        bio,
+        specialization,
+        ratePerMinute,
+        experienceYears,
+        phone,
+      },
+      { new: true }
+    );
+
+    if (!lawyer) {
+      return res.status(404).json({ message: "Lawyer not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      lawyer: {
+        id: lawyer._id,
+        name: lawyer.name,
+        email: lawyer.email,
+        phone: lawyer.phone,
+        specialization: lawyer.specialization,
+        ratePerMinute: lawyer.ratePerMinute,
+        experienceYears: lawyer.experienceYears,
+        bio: lawyer.bio,
+      },
+    });
+  } catch (error) {
+    console.error("UPDATE LAWYER PROFILE ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   registerLawyer,
   getLawyers,
@@ -465,6 +507,7 @@ module.exports = {
   getLawyerProfile,
   getLawyerStats,
   withdrawFunds,
-  completeLawyerProfile
+  completeLawyerProfile,
+  updateLawyerProfile,
 };
 

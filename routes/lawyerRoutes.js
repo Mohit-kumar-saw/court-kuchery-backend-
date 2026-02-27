@@ -12,12 +12,14 @@ const {
   getLawyerProfile,
   getLawyerStats,
   withdrawFunds,
-  completeLawyerProfile
+  completeLawyerProfile,
+  updateLawyerProfile
 } = require("../controllers/lawyerController");
 const adminMiddleware = require("../middleware/adminMiddleware");
 
 router.post("/register", registerLawyer);
 router.get("/me", authMiddleware, getLawyerProfile);
+router.patch("/me/update", authMiddleware, updateLawyerProfile);
 router.get("/stats", authMiddleware, getLawyerStats);
 router.get("/", getLawyers);
 router.get("/:lawyerId", getLawyerById);
