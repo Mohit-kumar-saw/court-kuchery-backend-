@@ -309,24 +309,28 @@ const endConsultation = async (req, res) => {
     const io = req.app.get("io");
 
     const { sessionId } = req.params;
-    const userId = req.user.id;
+    const requesterId = req.user.id;
 
     const session = await ConsultSession.findById(sessionId);
     if (!session) {
       return res.status(404).json({ message: "Consultation session not found" });
     }
 
-    if (session.userId.toString() !== userId) {
+    const isClient = session.userId.toString() === requesterId;
+    const isLawyer = session.lawyerId.toString() === requesterId;
+
+    if (!isClient && !isLawyer) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
     // If session is already ended, just return its summary
     if (session.status === "ENDED" || session.status === "FORCE_ENDED") {
       const { commissionAmount, lawyerAmount } = await finalizeEarning(session, io, `session:${sessionId}`);
+      const user = await User.findById(session.userId);
       return res.status(200).json({
         message: "Session summary",
         totalAmount: session.totalAmount,
-        remainingBalance: (await User.findById(userId)).walletBalance,
+        remainingBalance: user?.walletBalance || 0,
         commission: commissionAmount,
         lawyerEarning: lawyerAmount,
       });
@@ -338,7 +342,7 @@ const endConsultation = async (req, res) => {
 
     const room = `session:${sessionId}`;
     const lawyerLockKey = `lock:lawyer:${session.lawyerId}`;
-    const userLockKey = `lock:user:${userId}`;
+    const userLockKey = `lock:user:${session.userId}`;
 
     /* 🔥 STOP BILLING */
     const activeInterval = sessions.get(sessionId);
@@ -358,12 +362,12 @@ const endConsultation = async (req, res) => {
     await releaseLock(lawyerLockKey);
     await releaseLock(userLockKey);
 
-    const user = await User.findById(userId);
+    const user = await User.findById(session.userId);
 
     res.status(200).json({
       message: "Consultation ended successfully",
       totalAmount: session.totalAmount,
-      remainingBalance: user.walletBalance,
+      remainingBalance: user?.walletBalance || 0,
       commission: commissionAmount,
       lawyerEarning: lawyerAmount,
     });
