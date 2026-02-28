@@ -312,13 +312,28 @@ const endConsultation = async (req, res) => {
     const userId = req.user.id;
 
     const session = await ConsultSession.findById(sessionId);
-
-    if (!session || session.status !== "ACTIVE") {
-      return res.status(404).json({ message: "Active session not found" });
+    if (!session) {
+      return res.status(404).json({ message: "Consultation session not found" });
     }
 
     if (session.userId.toString() !== userId) {
       return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    // If session is already ended, just return its summary
+    if (session.status === "ENDED" || session.status === "FORCE_ENDED") {
+      const { commissionAmount, lawyerAmount } = await finalizeEarning(session, io, `session:${sessionId}`);
+      return res.status(200).json({
+        message: "Session summary",
+        totalAmount: session.totalAmount,
+        remainingBalance: (await User.findById(userId)).walletBalance,
+        commission: commissionAmount,
+        lawyerEarning: lawyerAmount,
+      });
+    }
+
+    if (session.status !== "ACTIVE") {
+      return res.status(400).json({ message: "Only active sessions can be ended" });
     }
 
     const room = `session:${sessionId}`;
@@ -553,8 +568,8 @@ const generateAgoraTokenForSession = async (req, res) => {
     const userId = req.user.id;
 
     const session = await ConsultSession.findById(sessionId);
-    if (!session || session.status !== "ACTIVE") {
-      return res.status(404).json({ message: "Active session not found" });
+    if (!session || (session.status !== "ACTIVE" && session.status !== "REQUESTED")) {
+      return res.status(404).json({ message: "Consultation not in a valid state for calling" });
     }
 
     // Check if user is part of the session
