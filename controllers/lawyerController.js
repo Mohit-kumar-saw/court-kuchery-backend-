@@ -37,9 +37,29 @@ const registerLawyer = async (req, res) => {
       profileCompleted: false,
     });
 
+    const accessToken = generateAccessToken({
+      id: lawyer._id,
+      role: "LAWYER",
+    });
+
+    const refreshToken = generateRefreshToken({
+      id: lawyer._id,
+      role: "LAWYER",
+    });
+
+    lawyer.refreshToken = refreshToken;
+    await lawyer.save();
+
     res.status(201).json({
       message: "Lawyer registered. Please complete your profile.",
-      lawyerId: lawyer._id,
+      lawyer: {
+        id: lawyer._id,
+        name: lawyer.name,
+        email: lawyer.email,
+        profileCompleted: lawyer.profileCompleted,
+      },
+      accessToken,
+      refreshToken,
     });
   } catch (error) {
     console.error("REGISTER LAWYER ERROR 👉", error);
@@ -152,6 +172,7 @@ const lawyerLogin = async (req, res) => {
     });
 
     lawyer.refreshToken = refreshToken;
+    lawyer.isOnline = true; // Auto set online on login
     await lawyer.save();
 
     res.status(200).json({
@@ -161,6 +182,8 @@ const lawyerLogin = async (req, res) => {
         name: lawyer.name,
         email: lawyer.email,
         profileCompleted: lawyer.profileCompleted,
+        isOnline: lawyer.isOnline,
+        courtType: lawyer.courtType,
       },
       accessToken,
       refreshToken,
@@ -168,6 +191,22 @@ const lawyerLogin = async (req, res) => {
   } catch (error) {
     console.error("LAWYER LOGIN ERROR 👉", error);
     res.status(500).json({ message: error.message });
+  }
+};
+
+const lawyerLogout = async (req, res) => {
+  try {
+    const lawyerId = req.user.id;
+
+    await Lawyer.findByIdAndUpdate(lawyerId, {
+      refreshToken: null,
+      isOnline: false, // Auto set offline on logout
+    });
+
+    res.status(200).json({ message: "Logout successful" });
+  } catch (error) {
+    console.error("LAWYER LOGOUT ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -180,62 +219,95 @@ const getLawyers = async (req, res) => {
       limit = 10,
       minPrice,
       maxPrice,
-      onlineOnly
+      onlineOnly,
+      courtType,
+      latitude,
+      longitude,
+      district,
+      state,
     } = req.query;
 
-    const query = {
-      isVerified: true,
+    let lawyers = [];
+    let total = 0;
+    const skip = (Number(page) - 1) * Number(limit);
+
+    const getAggregation = (matchQuery, nearCoords = null) => {
+      const p = [];
+      if (nearCoords) {
+        p.push({
+          $geoNear: {
+            near: { type: "Point", coordinates: nearCoords },
+            distanceField: "distance",
+            spherical: true,
+            query: { isVerified: true, ...matchQuery },
+            distanceMultiplier: 0.001,
+          },
+        });
+      } else {
+        p.push({ $match: { isVerified: true, ...matchQuery } });
+      }
+
+      // Add common filters
+      const filterMatch = {};
+      if (specialization) filterMatch.specialization = specialization;
+      if (courtType) filterMatch.courtType = { $in: courtType.split(",") };
+      if (minPrice || maxPrice) {
+        filterMatch.ratePerMinute = {};
+        if (minPrice) filterMatch.ratePerMinute.$gte = Number(minPrice);
+        if (maxPrice) filterMatch.ratePerMinute.$lte = Number(maxPrice);
+      }
+      if (onlineOnly === "true") filterMatch.isOnline = true;
+      if (Object.keys(filterMatch).length > 0) p.push({ $match: filterMatch });
+
+      // Default sort for non-proximity
+      if (!nearCoords) {
+        let sortOption = { rating: -1, createdAt: -1 };
+        if (sort === "price_low") sortOption = { ratePerMinute: 1 };
+        else if (sort === "price_high") sortOption = { ratePerMinute: -1 };
+        else if (sort === "experience") sortOption = { experienceYears: -1 };
+        p.push({ $sort: sortOption });
+      }
+
+      return p;
     };
 
-    // 🔹 Filter by specialization
-    if (specialization) {
-      query.specialization = specialization;
+    // TIER 1: Proximity
+    if (latitude && longitude) {
+      const p = getAggregation({}, [parseFloat(longitude), parseFloat(latitude)]);
+      lawyers = await Lawyer.aggregate([...p, { $skip: skip }, { $limit: Number(limit) }, { $project: { password: 0, refreshToken: 0 } }]);
+      if (lawyers.length > 0) {
+        const countRes = await Lawyer.aggregate([...p, { $count: "total" }]);
+        total = countRes[0]?.total || 0;
+      }
     }
 
-    // 🔹 Filter by price range
-    if (minPrice || maxPrice) {
-      query.ratePerMinute = {};
-      if (minPrice) query.ratePerMinute.$gte = Number(minPrice);
-      if (maxPrice) query.ratePerMinute.$lte = Number(maxPrice);
+    // TIER 2: District
+    if (lawyers.length === 0 && district) {
+      const p = getAggregation({ district });
+      lawyers = await Lawyer.aggregate([...p, { $skip: skip }, { $limit: Number(limit) }, { $project: { password: 0, refreshToken: 0 } }]);
+      if (lawyers.length > 0) {
+        const countRes = await Lawyer.aggregate([...p, { $count: "total" }]);
+        total = countRes[0]?.total || 0;
+      }
     }
 
-    // 🔹 Online filter
-    if (onlineOnly === "true") {
-      query.isOnline = true;
+    // TIER 3: State
+    if (lawyers.length === 0 && state) {
+      const p = getAggregation({ state });
+      lawyers = await Lawyer.aggregate([...p, { $skip: skip }, { $limit: Number(limit) }, { $project: { password: 0, refreshToken: 0 } }]);
+      if (lawyers.length > 0) {
+        const countRes = await Lawyer.aggregate([...p, { $count: "total" }]);
+        total = countRes[0]?.total || 0;
+      }
     }
 
-    // 🔹 Sorting options
-    let sortOption = {};
-
-    switch (sort) {
-      case "rating":
-        sortOption = { rating: -1 };
-        break;
-      case "price_low":
-        sortOption = { ratePerMinute: 1 };
-        break;
-      case "price_high":
-        sortOption = { ratePerMinute: -1 };
-        break;
-      case "experience":
-        sortOption = { experienceYears: -1 };
-        break;
-      case "reviews":
-        sortOption = { totalReviews: -1 };
-        break;
-      default:
-        sortOption = { createdAt: -1 }; // newest first
+    // FINAL FALLBACK: All verified (if still nothing found)
+    if (lawyers.length === 0) {
+      const p = getAggregation({});
+      lawyers = await Lawyer.aggregate([...p, { $skip: skip }, { $limit: Number(limit) }, { $project: { password: 0, refreshToken: 0 } }]);
+      const countRes = await Lawyer.aggregate([...p, { $count: "total" }]);
+      total = countRes[0]?.total || 0;
     }
-
-    const skip = (page - 1) * limit;
-
-    const lawyers = await Lawyer.find(query)
-      .sort(sortOption)
-      .skip(skip)
-      .limit(Number(limit))
-      .select("-password -refreshToken");
-
-    const total = await Lawyer.countDocuments(query);
 
     res.status(200).json({
       total,
@@ -243,6 +315,7 @@ const getLawyers = async (req, res) => {
       pages: Math.ceil(total / limit),
       lawyers,
     });
+
 
   } catch (error) {
     console.error("GET LAWYERS ERROR 👉", error);
@@ -416,7 +489,7 @@ const withdrawFunds = async (req, res) => {
 const completeLawyerProfile = async (req, res) => {
   try {
     const lawyerId = req.user.id;
-    const { specialization, ratePerMinute, experienceYears, bio, barCouncilId, bankDetails } = req.body;
+    const { specialization, ratePerMinute, experienceYears, bio, barCouncilId, bankDetails, courtType, location, address, district, state } = req.body;
 
     if (!specialization || !ratePerMinute || !experienceYears || !barCouncilId || !bankDetails) {
       return res.status(400).json({ message: "All professional and bank details are required" });
@@ -431,7 +504,12 @@ const completeLawyerProfile = async (req, res) => {
         bio,
         barCouncilId,
         bankDetails,
+        courtType,
         profileCompleted: true,
+        location,
+        address,
+        district,
+        state,
       },
       { new: true }
     );
@@ -457,7 +535,7 @@ const completeLawyerProfile = async (req, res) => {
 const updateLawyerProfile = async (req, res) => {
   try {
     const lawyerId = req.user.id;
-    const { name, bio, specialization, ratePerMinute, experienceYears, phone } = req.body;
+    const { name, bio, specialization, ratePerMinute, experienceYears, phone, courtType, location, address, district, state } = req.body;
 
     const lawyer = await Lawyer.findByIdAndUpdate(
       lawyerId,
@@ -467,7 +545,11 @@ const updateLawyerProfile = async (req, res) => {
         specialization,
         ratePerMinute,
         experienceYears,
-        phone,
+        courtType,
+        location,
+        address,
+        district,
+        state,
       },
       { new: true }
     );
@@ -488,6 +570,11 @@ const updateLawyerProfile = async (req, res) => {
         ratePerMinute: lawyer.ratePerMinute,
         experienceYears: lawyer.experienceYears,
         bio: lawyer.bio,
+        courtType: lawyer.courtType,
+        location: lawyer.location,
+        address: lawyer.address,
+        district: lawyer.district,
+        state: lawyer.state,
       },
     });
   } catch (error) {
@@ -503,6 +590,7 @@ module.exports = {
   updateAvailability,
   verifyLawyer,
   lawyerLogin,
+  lawyerLogout,
   refreshLawyerAccessToken,
   getLawyerProfile,
   getLawyerStats,

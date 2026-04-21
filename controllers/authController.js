@@ -60,6 +60,8 @@ const register = async (req, res) => {
 
 
 const login = async (req, res) => {
+  console.log("loginn.....");
+
   try {
     const { email, password } = req.body;
 

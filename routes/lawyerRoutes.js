@@ -8,6 +8,7 @@ const {
   updateAvailability,
   verifyLawyer,
   lawyerLogin,
+  lawyerLogout,
   refreshLawyerAccessToken,
   getLawyerProfile,
   getLawyerStats,
@@ -26,6 +27,7 @@ router.get("/:lawyerId", getLawyerById);
 router.patch("/availability", authMiddleware, updateAvailability);
 router.patch("/:lawyerId/verify", authMiddleware, adminMiddleware, verifyLawyer);
 router.post("/login", lawyerLogin);
+router.post("/logout", authMiddleware, lawyerLogout);
 router.post("/refresh", refreshLawyerAccessToken);
 router.post("/withdraw", authMiddleware, withdrawFunds);
 router.post("/complete-profile", authMiddleware, completeLawyerProfile);

@@ -31,6 +31,12 @@ const lawyerSchema = new mongoose.Schema(
       enum: ["criminal", "family", "corporate", "civil", "property"],
       required: false,
     },
+    
+    courtType: {
+      type: [String],
+      enum: ["Civil Court", "High Court", "Supreme Court"],
+      default: ["Civil Court"],
+    },
 
     ratePerMinute: {
       type: Number,
@@ -103,6 +109,23 @@ const lawyerSchema = new mongoose.Schema(
       accountNumber: String,
       ifscCode: String,
       bankName: String,
+    },
+    location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+        index: "2dsphere",
+      },
+    },
+    district: String,
+    state: String,
+    address: {
+      type: String,
+      required: false,
     },
   },
   {
